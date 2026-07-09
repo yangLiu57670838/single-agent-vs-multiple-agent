@@ -1,0 +1,10 @@
+# Ignore Python artifacts, virtual environments, experiment results, API keys, and cached LLM responses.
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+results/*
+!results/.gitkeep
+.ipynb_checkpoints/

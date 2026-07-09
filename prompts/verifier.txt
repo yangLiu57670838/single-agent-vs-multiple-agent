@@ -1,0 +1,1 @@
+# Prompt template for the verifier agent (validate answer consistency before final output).

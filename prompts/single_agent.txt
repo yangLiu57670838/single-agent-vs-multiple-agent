@@ -1,0 +1,1 @@
+# Prompt template for the single-agent solver (question + context → final answer).

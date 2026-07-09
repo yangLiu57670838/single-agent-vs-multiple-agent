@@ -1,0 +1,1 @@
+# Prompt template for the orchestrator agent (coordinate sub-agents and synthesize final answer).

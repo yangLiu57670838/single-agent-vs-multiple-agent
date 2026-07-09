@@ -1,0 +1,1 @@
+# Prompt template for the retriever agent (rank and select relevant context paragraphs).
