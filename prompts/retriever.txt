@@ -1,1 +1,1 @@
-# Prompt template for the retriever agent (rank and select relevant context paragraphs).
+# Prompt template for retriever sub-agent: rank and select top-k paragraphs from all 10.

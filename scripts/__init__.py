@@ -1,1 +1,1 @@
-# Package marker for one-off setup and data preparation scripts.
+# Package marker for setup and data preparation scripts.

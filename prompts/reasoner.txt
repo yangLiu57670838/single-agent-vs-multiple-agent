@@ -1,1 +1,1 @@
-# Prompt template for the reasoner agent (multi-hop reasoning over selected paragraphs).
+# Prompt template for reasoner sub-agent: multi-hop reasoning over filtered paragraphs only.

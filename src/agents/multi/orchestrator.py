@@ -1,1 +1,1 @@
-# Orchestrator agent: routes tasks between sub-agents and emits the final answer.
+# Code-based supervisor (no LLM): runs the custom workflow state machine and coordinates sub-agent calls.

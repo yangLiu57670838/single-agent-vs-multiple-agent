@@ -1,1 +1,1 @@
-# Prompt template for the orchestrator agent (coordinate sub-agents and synthesize final answer).
+# Reserved for future LLM supervisor experiments; unused in v1 (supervisor is code in orchestrator.py).

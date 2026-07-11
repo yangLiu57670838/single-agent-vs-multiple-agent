@@ -1,1 +1,1 @@
-# Package marker for single-agent and multi-agent solver implementations.
+# Package marker for single-agent baseline and multi-agent custom workflow solvers.

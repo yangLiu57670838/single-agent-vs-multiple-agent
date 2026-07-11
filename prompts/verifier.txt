@@ -1,1 +1,1 @@
-# Prompt template for the verifier agent (validate answer consistency before final output).
+# Prompt template for verifier sub-agent: validate answer grounding in cited facts only.

@@ -1,1 +1,1 @@
-# Gitignored directory for experiment run outputs (predictions, metrics, traces, comparison reports).
+# Gitignored directory for experiment outputs: predictions.jsonl, metrics.json, traces.jsonl, comparison reports.

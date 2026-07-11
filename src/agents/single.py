@@ -1,1 +1,1 @@
-# Single-agent solver: one LLM reads all context paragraphs and produces the final answer.
+# Single-agent baseline solver: one LLM call with question + all 10 paragraphs (§7.1).

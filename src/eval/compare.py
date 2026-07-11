@@ -1,1 +1,1 @@
-# Generate side-by-side comparison reports (comparison.json and comparison.md) from single and multi run outputs.
+# Generate side-by-side comparison report: quality, reliability, latency, token cost (§9.5).

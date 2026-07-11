@@ -1,1 +1,1 @@
-# Prompt template for the single-agent solver (question + context → final answer).
+# Prompt template for single-agent baseline: question + all 10 paragraphs → final answer.

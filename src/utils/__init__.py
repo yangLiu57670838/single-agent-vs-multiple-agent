@@ -1,1 +1,1 @@
-# Utility functions for loading experiment configs, writing JSONL logs, and computing latency percentiles.
+# Package marker for shared utilities: config loading, I/O, and workflow trace logging.

@@ -1,1 +1,1 @@
-# Python dependencies for dataset loading, LLM clients, evaluation, and experiment orchestration.
+# Python dependencies: datasets, LLM SDKs, PyYAML, and evaluation utilities.

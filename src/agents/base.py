@@ -1,1 +1,1 @@
-# Shared agent interface and base class used by both single-agent and multi-agent pipelines.
+# Shared sub-agent interface: invoke LLM, parse structured output, return typed result to supervisor.

@@ -1,1 +1,1 @@
-# Unified LLM client with token counting, latency tracking, and cost estimation hooks.
+# Unified LLM client with per-call token counting, latency tracking, and cost estimation.

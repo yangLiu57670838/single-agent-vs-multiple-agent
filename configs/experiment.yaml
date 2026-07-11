@@ -1,1 +1,1 @@
-# Default experiment configuration: model name, temperature, subset path, architecture, and max LLM rounds.
+# Default experiment config: model, temperature, subset path, architecture toggle (single | multi).
