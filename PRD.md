@@ -272,25 +272,27 @@ The multi-agent arm uses a **fixed custom workflow** of **specialized sub-agents
 
 #### 7.2.2 Workflow Topology
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│              Code Supervisor (orchestrator.py)              │
-│         state machine · context filter · metrics log          │
-│                    (no LLM calls)                           │
-└──────────────────────────┬───────────────────────────────────┘
-                           │ fixed workflow
-          ┌────────────────┼────────────────┐
-          ▼                ▼                ▼
-   ┌─────────────┐  ┌──────────────┐  ┌──────────────┐
-   │ Retriever   │  │  Reasoner    │  │  Verifier    │
-   │ sub-agent   │─►│  sub-agent   │─►│  sub-agent   │
-   │  (LLM)      │  │  (LLM)       │  │  (LLM)       │
-   └─────────────┘  └──────┬───────┘  └──────┬───────┘
-                           ▲                  │
-                           │  handoff (retry) │
-                           └──────────────────┘
-                              if verifier fails
-                              (max 1 retry)
+The supervisor is the main coordinator. It does not call an LLM. Each box shows who acts and what context that step is allowed to see. The only branch is one retry.
+
+**Sequential, not parallel.** The retriever, reasoner, and verifier run one after another on each question. The reasoner needs the retriever's top-k indices, and the verifier needs the reasoner's answer and citations, so these sub-agents have no independent work to run at the same time. The retry is sequential too: the reasoner runs again only after the verifier returns `fail`. Running different questions at the same time is a separate eval choice (§14) and does not make the sub-agents parallel.
+
+```mermaid
+flowchart TD
+  in["HotpotQA example<br/>question + 10 paragraphs<br/>2 gold, 8 distractors"]
+  s1["Supervisor · no LLM<br/>hold the example in state"]
+  retriever["Retriever · LLM<br/>sees question + all 10<br/>returns top-k indices"]
+  s2["Supervisor · no LLM<br/>drop every paragraph outside top-k"]
+  reasoner["Reasoner · LLM<br/>sees question + top-k only<br/>returns answer + citations"]
+  s3["Supervisor · no LLM<br/>keep the answer and cited sentences only"]
+  verifier["Verifier · LLM<br/>sees question + answer + cited sentences<br/>returns pass or fail"]
+  gate{"Supervisor · no LLM<br/>verifier result"}
+  retry["Supervisor · no LLM<br/>pass verifier feedback to the reasoner<br/>one retry only"]
+  done["Supervisor · no LLM<br/>parse FINAL ANSWER and write the trace"]
+
+  in --> s1 --> retriever --> s2 --> reasoner --> s3 --> verifier --> gate
+  gate -->|pass| done
+  gate -->|fail, first time| retry --> reasoner
+  gate -->|fail after the retry| done
 ```
 
 **Workflow steps (deterministic):**
@@ -350,10 +352,11 @@ verifier_input = {
 |---|---|
 | Run fixed workflow | State machine: `retrieve → reason → verify → [retry?] → done` |
 | Filter context | Build per-agent payloads per §7.2.4 |
-| Enforce turn limits | `max_rounds` default 6 (including retries) |
-| Handle handoff | Pass verifier feedback to reasoner on fail (max 1 retry) |
-| Log metrics | Per-step latency, input/output tokens, LLM call count |
-| Emit final answer | Parse `FINAL ANSWER: ...` from last successful step |
+| Enforce turn limits | `max_rounds` default 6, `max_retries` 1, and `max_total_tokens` per question (§7.2.7) |
+| Handle handoff | On verifier fail, re-call the reasoner once with that feedback. Do not re-run the retriever (§7.2.7) |
+| Stop if the retry repeats the same issue | Compare verifier issue codes. Same issue → stop and emit the best attempt (§7.2.7) |
+| Log metrics | Per-step latency, input/output tokens, LLM call count, stop reason |
+| Emit final answer | Parse `FINAL ANSWER: ...`. If the loop stopped on a fail, a repeated issue, or the token budget, mark the trace `incomplete` |
 
 #### 7.2.6 Constraints (Fairness)
 
@@ -361,7 +364,42 @@ verifier_input = {
 - Context isolation is **supervisor-enforced** — sub-agents never receive paragraphs outside their scoped payload.
 - Supervisor adds **zero LLM tokens**; its wall-clock time is logged as orchestration overhead.
 - Total LLM calls capped at `max_rounds` (default: 6).
-- All sub-agents use the **same base model** as the single-agent baseline.
+- Per-question token budget capped at `max_total_tokens`. The supervisor checks it before every LLM call (§7.2.7).
+- All sub-agents use the **same base model** as the single-agent baseline. The model does not change mid-question.
+
+#### 7.2.7 Loop Control: Retry, Same-Issue Stop, Token Budget
+
+The supervisor decides when a question is done. That decision is code. It does not call a model to plan, verify, or merge, and it does not start the pipeline over.
+
+**One pass, then at most one gap-fix.**
+
+```text
+retriever sees all 10 → supervisor drops the rest
+reasoner sees question + top-k → answer + citations
+verifier sees question + answer + cited sentences → pass/fail + issue
+
+if pass: emit FINAL ANSWER and stop
+
+# gap-fix, once: same top-k, plus the verifier feedback
+# the retriever is not called again
+reasoner runs again (prompts/reasoner_retry.txt)
+verifier runs again
+emit the latest FINAL ANSWER
+if still failing: mark the trace incomplete (best attempt)
+```
+
+**Same-issue stop.** The verifier's criteria do not use the gold answer. It returns `pass` or `fail` plus a short issue code: `unsupported_claim` or `citation_not_in_payload`. If the second fail uses the same issue code as the first, the supervisor logs `same_issue` and stops. Another identical reasoner call is not allowed. If the issue code changed but the check still fails, it also stops, because `max_retries` is 1, and logs `still_failing`.
+
+**Caps, checked before each LLM call** (`configs/multi_agent.yaml`):
+
+| Cap | What it stops |
+|---|---|
+| `max_output_tokens` | Per call. Same value as the single agent, so one stage cannot write an unbounded completion |
+| `max_total_tokens` | Per question. Running sum of input + output. If the next call would cross it, skip that call, emit the best answer so far, and log `budget_stop` |
+| `max_rounds` | Hard cap on LLM calls, default 6, including the retry |
+| `max_retries` | The reasoner may be repeated once. Default 1 |
+
+`top_k` stays the context cap: the reasoner never receives all 10 paragraphs. Tokens are still logged when a cap stops the run. The cap bounds the question. It does not hide the cost.
 
 ### 7.3 Shared Infrastructure
 
@@ -546,7 +584,7 @@ single-agent-vs-multiple-agent/
 ├── README.md
 ├── configs/
 │   ├── experiment.yaml           # model, subset size, architecture toggles
-│   ├── multi_agent.yaml          # top_k, max_rounds, retry policy
+│   ├── multi_agent.yaml          # top_k, max_rounds, max_retries, max_total_tokens
 │   └── pricing.yaml              # per-model token pricing
 ├── data/
 │   └── subsets/
@@ -686,9 +724,9 @@ Aligned with **§2 What We Want to Prove**. All of H1–H7 test **Point 1 only**
 
 1. **Which base model(s)?** Start with one capable model (GPT-4o or Claude Sonnet) + one budget model for cost sensitivity analysis.
 2. **Retriever strategy:** LLM-based paragraph ranking vs embedding similarity — affects fairness if only multi-agent gets embeddings.
-3. **Verifier loop:** Allow one retry on verification failure, or single-pass only?
+3. **Verifier loop:** Decided in §7.2.7 — one gap-fix retry, then stop. A repeated verifier issue stops immediately. No further rounds.
 4. **Answer format:** Free-form vs forced `FINAL ANSWER: <short phrase>` — recommend forced format for reliable EM.
-5. **Parallelism:** Run questions concurrently (faster wall-clock) vs sequentially (cleaner latency per question)?
+5. **Question-level parallelism:** Run questions concurrently (faster wall-clock) vs sequentially (cleaner latency per question)? Sub-agents stay sequential either way (§7.2.2).
 
 ---
 
