@@ -15,30 +15,40 @@ The primary research question:
 
 > For multi-hop QA, does splitting work across multiple agents — each seeing only task-relevant context — improve answer quality and reduce hallucination — and if so, at what cost in latency and tokens?
 
+This repo tests **one** reason to use multiple agents: **Point 1, scoped context** (§2.1). The final report may also name other reasons to use multi-agent (§2.6) and reasons to keep a single agent (§2.7). The numbers only speak to Point 1, and to delay and cost on this small task (§9.5).
+
 See **§2 What We Want to Prove** for the full hypothesis, expected outcomes, and proof criteria.
 
-We measure three dimensions on every run:
+We measure three dimensions on every run. Quality tests Point 1. **Delay and token cost are the trade-off**: more agents mean more round-trips and more tokens, so the final report must say whether that penalty is worth the quality gain (§2.3, §9.5).
 
 | Dimension | Question |
 |---|---|
 | **Quality** | Which architecture produces more correct answers? |
-| **Latency** | Which architecture is slower end-to-end? |
-| **Token cost** | Which architecture consumes more tokens (and therefore costs more)? |
+| **Delay** | How much slower is multi-agent, and where does the time go? |
+| **Token cost** | How much more does multi-agent spend, and what does each correct answer cost? |
 
 ---
 
 ## 2. What We Want to Prove
 
-### 2.1 Core Hypothesis
+### 2.1 Core Hypothesis — Point 1: Scoped Context
 
-> Each agent only sees the **context required for its own task**, reducing interference from irrelevant information and making outputs more accurate and stable.
+This repo tries to prove **one** claim:
 
-HotpotQA's **distractor** setting is ideal for testing this: each question ships with **10 paragraphs** — 2 gold, 8 distractors. A single agent must reason through all 10 at once; a multi-agent system can progressively narrow context per stage.
+> **Point 1.** Irrelevant material that stays in the prompt becomes noise and interferes with the decision. Split the job so each stage sees only the context required for its own task. The coordinator then uses each stage's short result, not the raw inputs that stage read.
+
+Why this shows up in a single agent: the model has no separate memory. Everything it has been shown — every paragraph, every earlier tool result — is still in the next call unless something outside the model removes it. Deciding what can be safely dropped, or summarizing the trace and keeping only the summary, is its own policy and spends extra tokens. A sub-agent can do the wide read and return a filtered result (for example, the ten places auth is checked, not fifty files of source). The lead reasons over that result only.
+
+**What this benchmark actually runs** is a small, fixed version of that idea. It is not a 200-file sweep, not a context window filling up, and not a transcript that grows across dozens of tool calls. HotpotQA distractor gives every question **10 paragraphs** (2 gold, 8 distractors). The single agent is handed all 10 up front, in 1–3 turns. The multi-agent arm narrows context between stages:
 
 | Architecture | Context exposure |
 |---|---|
 | **Single-agent** | All 10 paragraphs in every LLM call — retrieval, reasoning, and answering share the same noisy context |
-| **Multi-agent** | Code supervisor runs a fixed workflow; retriever sees all 10 → reasoner sees top-k only → verifier sees answer + cited facts only |
+| **Multi-agent** | Code supervisor runs a fixed workflow; retriever sees all 10 and returns top-k indices → reasoner sees those paragraphs only → verifier sees the answer + cited sentences only |
+
+The retriever is the sub-agent that "reads everything and returns the hits." The supervisor drops the other paragraphs before the reasoner is called, so those distractors never enter the reasoner's prompt. That filter is the mechanism under test — not conversation compaction inside one agent.
+
+We measure whether that noise reduction improves answer quality, hallucination, and citation, and what extra latency and tokens the split costs (§2.2–§2.4).
 
 ### 2.2 Expected Outcomes (if hypothesis holds)
 
@@ -48,16 +58,18 @@ HotpotQA's **distractor** setting is ideal for testing this: each question ships
 | **Fewer mis-citations** | Each agent cites only from its scoped context, reducing wrong-paragraph attribution | Supporting Facts EM/F1 vs gold `supporting_facts`; paragraph index accuracy in agent traces |
 | **Higher accuracy** | Less noise → more reliable multi-hop reasoning, especially on bridge questions | Answer EM and F1 overall; breakdown by `type` (`bridge`, `comparison`) and `level` (`easy`, `medium`, `hard`) |
 
-### 2.3 Trade-offs We Also Expect to Confirm
+### 2.3 Trade-off We Will Evaluate: Delay and Cost
 
-Context isolation should improve quality, but not for free:
+More agents means more LLM round-trips and more tokens. The split has to buy something. We **will evaluate delay and cost on every run**, for both architectures, on the same questions. The final report (`comparison.md`, §9.5) **must explain** those numbers in prose: what the penalty is, where it comes from, and whether the Point 1 gains pay for it.
 
-| Trade-off | Expected direction | How we measure it |
+| Trade-off | What we evaluate | What the final report must explain |
 |---|---|---|
-| **Slower** | Multi-agent runs more LLM round-trips | End-to-end latency (mean, p50, p95); per-agent stage breakdown |
-| **Higher token cost** | Inter-agent messages duplicate and expand context | Total input/output tokens per question; estimated USD cost |
+| **Delay** | End-to-end latency (mean, p50, p95); per-stage time (retrieve, reason, verify); orchestration overhead (wall-clock outside LLM calls) | How much slower multi-agent is, where the time goes, and the latency ratio (multi-agent p95 / single-agent p95). Expected direction: slower, because of extra LLM rounds (H4, about ≥2×). |
+| **Cost** | Input and output tokens per question; LLM call count; estimated USD from `configs/pricing.yaml` | How much more multi-agent spends, which stage spends the tokens, cost per correct answer, and EM per 1k tokens. Expected direction: higher, because each stage sends its own prompt (H5, about ≥1.5× tokens). |
 
-The benchmark must **quantify** whether accuracy and reliability gains justify the latency and cost penalty.
+The explanation is required either way. If quality improves, the report says whether the gain is worth the extra delay and cost (§2.4). If it does not, the report says the split still costs more and runs slower, so prefer the single agent for this task (§2.5).
+
+This evaluation is delay and token cost only. Supervisor time is included as orchestration overhead. Design effort, and new failure modes introduced by the split, are not scored.
 
 ### 2.4 Proof Criteria
 
@@ -79,6 +91,30 @@ And we publish a clear verdict on **whether the gain is worth it**, using:
 
 If results match the null hypothesis, the conclusion is: **prefer single-agent** for this task unless other factors (debuggability, modularity) matter.
 
+### 2.6 Other Reasons to Use Multi-Agent — Named, Not Tested
+
+Point 1 is not the only reason a multi-agent system can be better. The final report may say so in a few sentences, then state that **this test repo only tries to prove Point 1**. The table below is that scope note. None of these rows are hypotheses, and none of them should be read off the HotpotQA numbers.
+
+| # | Other situation where multi-agent can help | Why this repo does not prove it |
+|---|---|---|
+| 2 | Independent jobs run in parallel and cut wall-clock time | The workflow is sequential (retrieve → reason → verify). Each step needs the previous result. The expected latency result is slower, not faster (§2.3). |
+| 3 | A reviewer with a fresh context catches blind spots the writer missed | The verifier does see a narrower payload, but any gain is confounded with the retriever filter. v1 does not ablate verifier-on vs verifier-off, so it is not a separate claim. |
+| 4 | Different jobs can use different tools, permissions, or models | Every sub-agent uses the same base model, temperature, and output cap (§7.2.6). There are no tools and no permission boundaries. |
+| 5 | A sub-agent can keep working in the background without blocking other jobs | The supervisor is a synchronous state machine. Latency is end-to-end per question. |
+
+### 2.7 When to Keep a Single Agent
+
+These are reasons to stay with one agent. The final report names all four in a short note (§9.5). Only two of them are things this benchmark's numbers can speak to. They are not extra hypotheses beyond H4–H6 and §2.5.
+
+| # | Keep a single agent when | What this repo does with it |
+|---|---|---|
+| 1 | **The steps are tightly linked.** Each step depends on the last (debugging, step-by-step refactoring, most coding). Handing work between agents loses the subtle context that matters. | **Name only.** Retrieve → reason → verify is tightly linked, and a short handoff can drop a fact the next stage needed. Debugging and refactoring are not this dataset. A HotpotQA win or loss does not prove this rule. |
+| 2 | **The task is small.** If it fits easily in one context, splitting it only adds overhead. | **The numbers speak to this.** Ten paragraphs fit in one prompt. On `easy` questions, the report uses H6 plus the delay and cost verdict (§2.3): did the split only add overhead? If `hard` / `bridge` still improves, fitting in one context was not enough — the 8 distractors were still noise. |
+| 3 | **Consistency matters.** Several agents editing the same files or making design choices separately will conflict and drift. | **Name only.** These agents do not edit shared files or make design choices in parallel. The supervisor is code, so routing does not drift. |
+| 4 | **Coordination costs more than the work.** Each new agent starts from nothing and has to rebuild context you already have. Briefs lose information, and summaries can hide mistakes. | **The cost half, yes.** Each stage starts a new prompt and re-sends the question plus its slice. That extra delay and those extra tokens are §2.3. A brief that hid a mistake is not its own metric. It shows up only if the answer gets worse. |
+
+The report's "prefer the single agent" sentence stays §2.5: quality did not move enough to pay for the extra delay and cost, especially on easy questions. That is the evidence for rows 2 and 4. Rows 1 and 3 are the wider rule, not results of this run.
+
 ---
 
 ## 3. Background & Motivation
@@ -99,9 +135,9 @@ Agent frameworks (Cursor, LangGraph, AutoGen, etc.) increasingly promote multi-a
 ### 4.1 Primary Goals
 
 1. **Implement** a single-agent and a multi-agent HotpotQA solver using the same base LLM and prompt budget constraints.
-2. **Prove or disprove** the context-isolation hypothesis in §2 (accuracy, hallucination, mis-citation vs latency and cost).
+2. **Prove or disprove** the context-isolation hypothesis in §2 (accuracy, hallucination, mis-citation) and **evaluate the delay and cost trade-off** on the same runs (§2.3).
 3. **Evaluate** both architectures on a fixed HotpotQA subset with identical preprocessing.
-4. **Report** answer quality, reliability, latency, and token usage side-by-side with statistical summaries.
+4. **Explain in the final report** the quality result and the delay and cost penalty: how much slower, how much more expensive, where the time and tokens go, and whether the split is worth it (§9.5).
 5. **Publish** reproducible experiment configs, logs, and result artifacts.
 
 ### 4.2 Secondary Goals
@@ -493,10 +529,12 @@ Each line in `predictions.jsonl`:
 
 1. Which architecture has higher EM / F1?
 2. Which produces **less hallucination** and **fewer mis-citations**?
-3. Which is slower (mean, p95)?
-4. Which uses more tokens and costs more?
-5. Is the quality/reliability gap worth the extra cost/latency?
+3. **Delay.** How much slower is multi-agent (mean, p50, p95), where does the time go (per stage and orchestration overhead), and what is the latency ratio? Explain the cause, not only the ranking (§2.3).
+4. **Cost.** How many more tokens and how much more USD does multi-agent use, which stage spends them, and what is the cost per correct answer and EM per 1k tokens? Explain the cause (§2.3).
+5. **Verdict.** Do the quality and reliability gains pay for the extra delay and cost? If they do not, say so and prefer the single agent for this task.
 6. Where does multi-agent win or lose (by type/level)?
+7. **Scope.** In a short note, name other situations where multi-agent can help (parallel independent work, a fresh-context reviewer, per-role models or permissions, background work — §2.6). Then state that this test repo only tries to prove **Point 1** (scoped context, §2.1), and that the numbers above are evidence only for that claim, plus the delay and cost of the split (§2.3).
+8. **When to keep a single agent.** Name the four situations in §2.7. Tie the "prefer single agent" verdict only to the two this run can speak to: the task is small (`easy` vs `hard` / `bridge`, H6) and coordination costs more than the work (the delay and token bill, §2.3). Do not present tightly linked coding steps, or agents conflicting on the same files, as findings.
 
 ---
 
@@ -598,11 +636,11 @@ python -m src.eval.compare \
 - [ ] Breakdown by type and level
 - [ ] Per-agent token/latency breakdown for multi-agent
 - [ ] At least 2 models tested (e.g. GPT-4o + one cheaper model)
-- [ ] Documented conclusion: quality vs speed vs cost tradeoff
+- [ ] Final report explains the delay and cost trade-off and whether the quality gain is worth it (§2.3, §9.5)
 
 ### 11.3 Hypotheses to Test
 
-Aligned with **§2 What We Want to Prove**:
+Aligned with **§2 What We Want to Prove**. All of H1–H7 test **Point 1 only** (scoped context), plus the delay and cost of that split. They do not test parallel speedup, fresh-context review as its own effect, per-role models or permissions, or background work (§2.6). They also do not test the "keep a single agent" rules in §2.7, except that H6 and the delay/cost verdict speak to a small task that already fits in one context, and to coordination cost.
 
 | # | Hypothesis | Maps to |
 |---|---|---|
@@ -611,7 +649,7 @@ Aligned with **§2 What We Want to Prove**:
 | H3 | Multi-agent produces **fewer mis-citations** — wrong supporting paragraph attribution | §2.2 Fewer mis-citations |
 | H4 | Multi-agent has **≥2× latency** vs single-agent due to orchestration and extra LLM rounds | §2.3 Slower |
 | H5 | Multi-agent consumes **≥1.5× tokens** due to inter-agent message passing | §2.3 Higher token cost |
-| H6 | Single-agent is more **cost-efficient per correct answer** on `easy` questions where context filtering adds little value | §2.4 Cost per correct answer |
+| H6 | Single-agent is more **cost-efficient per correct answer** on `easy` questions where context filtering adds little value | §2.4 Cost per correct answer; §2.7 the task is small |
 | H7 | Multi-agent advantage **diminishes** when the base model is stronger (better at ignoring distractors) | §2.5 Null hypothesis |
 
 ---
